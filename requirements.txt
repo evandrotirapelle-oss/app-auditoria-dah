@@ -1,6 +1,7 @@
 streamlit
 st-gsheets-connection
-docx-templates
+streamlit-gsheets
+docxtpl
 pandas
 num2words
 pypdf
