@@ -1,26 +1,47 @@
-import os
-import io
-import re
-import base64
+import sys
 import traceback
-from datetime import datetime
-import pandas as pd
+
+# 1. Configuração inicial obrigatória
 import streamlit as st
-import streamlit.components.v1 as components
-from docxtpl import DocxTemplate
-from streamlit_gsheets import GSheetsConnection
-from extractor import extrair_dados_processo, formatar_valor_reais
-from extractor_producao import extrair_dados_producao_medica
-from num2words import num2words
+st.set_page_config(
+    page_title="Sistema de Auditoria | DAH-FUNEAS",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# 2. Bloco protegido para capturar qualquer falha e exibir na tela
+try:
+    import os
+    import io
+    import re
+    import base64
+    from datetime import datetime
+    import pandas as pd
+    from docxtpl import DocxTemplate
+    from streamlit_gsheets import GSheetsConnection
+    from extractor import extrair_dados_processo, formatar_valor_reais
+    from extractor_producao import extrair_dados_producao_medica
+    from num2words import num2words
+    import streamlit.components.v1 as components
+
+    # Testa a inicialização dos Secrets / Conexão
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+    except Exception as err_conn:
+        st.error("⚠️ FALHA NA CONEXÃO COM O GOOGLE SHEETS / SECRETS:")
+        st.code(str(err_conn))
+        st.stop()
+
+except Exception as err_geral:
+    st.error("🚨 OCORREU UM ERRO AO CARREGAR AS DEPENDÊNCIAS DO APLICATIVO:")
+    st.code(traceback.format_exc())
+    st.stop()
 
 # ==========================================
 # GATILHO DE DOWNLOAD DIRETO VIA JAVASCRIPT
 # ==========================================
 def disparar_download_imediato(conteudo_bytes, nome_arquivo):
-    """
-    Injeta JavaScript na janela pai para forçar o download automático
-    do arquivo no mesmo instante em que o usuário clica em Gerar.
-    """
     b64 = base64.b64encode(conteudo_bytes).decode()
     js_code = f"""
     <script>
@@ -46,9 +67,6 @@ def disparar_download_imediato(conteudo_bytes, nome_arquivo):
     """
     components.html(js_code, height=0, width=0)
 
-# ==========================================
-# FUNÇÃO AUXILIAR DE FORMATAÇÃO DE DATA
-# ==========================================
 def auto_formatar_data(valor):
     if not valor or pd.isna(valor):
         return ""
@@ -65,19 +83,7 @@ def auto_formatar_data(valor):
     return v
 
 # ==========================================
-# CONFIGURAÇÃO DA PÁGINA E CONEXÃO
-# ==========================================
-st.set_page_config(
-    page_title="Sistema de Auditoria | DAH-FUNEAS",
-    page_icon="🏥",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# ==========================================
-# ESTILOS CSS - DESTAQUE E SEPARAÇÃO DOS MÓDULOS
+# ESTILOS CSS
 # ==========================================
 st.markdown(
     """
@@ -85,12 +91,10 @@ st.markdown(
         [data-testid="stSidebar"], [data-testid="stSidebarNav"], [data-testid="collapsedControl"] {
             display: none !important;
         }
-        
         .block-container {
             padding-top: 1.2rem !important;
             padding-bottom: 2rem !important;
         }
-
         .dah-header {
             background: linear-gradient(90deg, #0f2b48 0%, #1e3a8a 100%);
             padding: 12px 24px;
@@ -112,11 +116,9 @@ st.markdown(
             font-size: 0.85rem;
             color: #93c5fd;
         }
-
         div.stButton > button {
             transition: all 0.2s ease-in-out !important;
         }
-
         .btn-modulo-ativo button {
             background-color: #1e3a8a !important;
             color: #ffffff !important;
@@ -128,7 +130,6 @@ st.markdown(
             box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
             transform: translateY(-1px);
         }
-
         .btn-modulo-inativo button {
             background-color: #f8fafc !important;
             color: #475569 !important;
@@ -148,9 +149,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ==========================================
-# HEADER INTEGRADO
-# ==========================================
+# Header
 st.markdown(
     """
     <div class="dah-header">
@@ -174,9 +173,7 @@ MEMBROS_EQUIPE = [
 if "modulo_ativo" not in st.session_state:
     st.session_state["modulo_ativo"] = "opme"
 
-# ==========================================
-# CONTROLES SUPERIORES (CAIXAS SEPARADAS + PERFIL)
-# ==========================================
+# Seletores
 col_mod1, col_mod2, col_respiro, col_user = st.columns([1.6, 1.6, 0.4, 1.4])
 
 with col_mod1:
@@ -219,10 +216,7 @@ else:
 
 st.markdown("---")
 
-
-# =====================================================================
-# FUNCIONALIDADE 1: OPME
-# =====================================================================
+# MÓDULO OPME
 if st.session_state["modulo_ativo"] == "opme":
     st.subheader("Gerador de Despacho de OPME")
     st.caption("Extração automatizada, emissão de despachos e registo consolidado no Google Sheets.")
@@ -258,7 +252,7 @@ if st.session_state["modulo_ativo"] == "opme":
                 vig_fim = st.text_input("Vigência Fim", value=dados["vigencia_fim"], key="opme_vfim")
 
         st.subheader("Relação de Notas Fiscais e Pacientes")
-        st.caption("💡 *Dica:* Na data da cirurgia, você pode digitar apenas os números (ex: `13112026`) que será formatado automaticamente.")
+        st.caption("💡 *Dica:* Na data da cirurgia, pode digitar apenas os números (ex: `13112026`).")
 
         df_nfs = pd.DataFrame(dados["nfs"])
         if df_nfs.empty:
@@ -267,9 +261,7 @@ if st.session_state["modulo_ativo"] == "opme":
         df_editado = st.data_editor(
             df_nfs, num_rows="dynamic", use_container_width=True,
             column_config={
-                "numero": "Nº NF", 
-                "data_emissao": "Data Emissão", 
-                "valor": "Valor (R$)",
+                "numero": "Nº NF", "data_emissao": "Data Emissão", "valor": "Valor (R$)",
                 "paciente": "Nome do Paciente", 
                 "data_cirurgia": st.column_config.TextColumn(
                     "Data Cirurgia (DD/MM/AAAA)",
@@ -314,7 +306,6 @@ if st.session_state["modulo_ativo"] == "opme":
             texto_inconformidade = st.text_area("Descreva as inconformidades por paciente/NF:", height=120, key="txt_inc_opme")
 
         st.subheader("Geração do Despacho")
-        
         candidatos_template = [
             os.path.abspath(os.path.join(os.path.dirname(__file__), "templates", "modelo_despacho.docx")),
             os.path.abspath(os.path.join(os.getcwd(), "templates", "modelo_despacho.docx")),
@@ -329,7 +320,6 @@ if st.session_state["modulo_ativo"] == "opme":
             primeiro_nome_forn = fornecedor_nome.split()[0].replace("/", "_") if fornecedor_nome else ""
             nome_saida_opme = f"DESPACHO_{hospital_sigla}_OPME_{protocolo}_{primeiro_nome_forn}.docx"
 
-            # UM ÚNICO CLIQUE: Gera, registra na planilha e inicia o download
             if st.button("📝 Gerar e Descarregar Despacho (OPME)", key="btn_exec_opme", type="primary"):
                 with st.spinner("A gerar documento Word e a registar na folha de cálculo..."):
                     df_editado_formatado = df_editado.copy()
@@ -363,7 +353,6 @@ if st.session_state["modulo_ativo"] == "opme":
                             detalhes_pacientes.append(item_str)
 
                     pacientes_str = " | ".join(detalhes_pacientes)
-                    
                     novo_registo = pd.DataFrame([{
                         "Data/Hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
                         "Divisão (DAH)": "DAH",
@@ -388,14 +377,10 @@ if st.session_state["modulo_ativo"] == "opme":
                     except Exception as e:
                         st.error(f"⚠️ Erro ao registar na Folha: {repr(e)}")
 
-                    # Dispara o download imediatamente na janela
                     disparar_download_imediato(docx_bytes, nome_saida_opme)
-                    st.info(f"O download do arquivo **{nome_saida_opme}** foi iniciado diretamente.")
+                    st.info(f"O download do ficheiro **{nome_saida_opme}** foi iniciado diretamente.")
 
-
-# =====================================================================
-# FUNCIONALIDADE 2: PRODUÇÃO MÉDICA / ESCALA MÉDICA
-# =====================================================================
+# MÓDULO PRODUÇÃO
 elif st.session_state["modulo_ativo"] == "producao":
     st.subheader("Gerador de Despacho de Produção Médica")
     st.caption("Emissão de despacho com definição obrigatória de modalidade e especialidade médica.")
@@ -418,8 +403,7 @@ elif st.session_state["modulo_ativo"] == "producao":
             tipo_servico_selecionado = st.radio(
                 "Qual a modalidade deste processo? *",
                 options=["Produção Médica", "Escala Médica"],
-                index=0,
-                key="p_tipo_servico"
+                index=0, key="p_tipo_servico"
             )
         with col_esp:
             prod_especialidade = st.text_input(
@@ -457,9 +441,7 @@ elif st.session_state["modulo_ativo"] == "producao":
 
         df_editado_prod = st.data_editor(
             df_nfs_prod, num_rows="dynamic", use_container_width=True,
-            column_config={
-                "numero": "Nº NF", "data_emissao": "Data Emissão", "valor": "Valor (R$)"
-            },
+            column_config={"numero": "Nº NF", "data_emissao": "Data Emissão", "valor": "Valor (R$)"},
             key="editor_prod"
         )
 
@@ -497,7 +479,6 @@ elif st.session_state["modulo_ativo"] == "producao":
             texto_inconformidade_p = st.text_area("Digite a inconsistência detetada:", height=120, key="txt_inc_prod")
 
         st.subheader("Geração do Despacho")
-        
         pastas_base = [
             os.path.abspath(os.path.join(os.path.dirname(__file__), "templates")),
             os.path.abspath(os.path.join(os.getcwd(), "templates")),
@@ -505,19 +486,17 @@ elif st.session_state["modulo_ativo"] == "producao":
             os.path.abspath(os.getcwd()),
             "templates"
         ]
-        
         nomes_ficheiro = [
             "modelo_despacho_producao_medica.docx",
             "modelo_despacho_producao_medica.docx.docx",
             "modelo_despacho_producao_medica"
         ]
-        
         caminho_template_prod = None
         for p in pastas_base:
             for n in nomes_ficheiro:
-                possivel_caminho = os.path.join(p, n)
-                if os.path.exists(possivel_caminho):
-                    caminho_template_prod = possivel_caminho
+                possivel = os.path.join(p, n)
+                if os.path.exists(possivel):
+                    caminho_template_prod = possivel
                     break
             if caminho_template_prod:
                 break
@@ -532,12 +511,10 @@ elif st.session_state["modulo_ativo"] == "producao":
                 primeiro_nome_forn_p = prod_fornecedor.split()[0].replace("/", "_") if prod_fornecedor else "Empresa"
                 nome_saida_prod = f"DESPACHO_{prod_hospital_sigla}_{tipo_slug}_{prod_protocolo}_{primeiro_nome_forn_p}.docx"
 
-                # UM ÚNICO CLIQUE: Gera, registra na planilha e inicia o download
                 if st.button(f"📝 Gerar e Descarregar Despacho ({tipo_servico_selecionado})", key="btn_exec_prod", type="primary"):
                     with st.spinner("A gerar documento Word e a registar na folha de cálculo..."):
                         doc_p = DocxTemplate(caminho_template_prod)
                         lista_nfs_p = df_editado_prod.to_dict(orient="records")
-
                         termo_servico = "escala médica" if tipo_servico_selecionado == "Escala Médica" else "produção médica"
 
                         contexto_p = {
@@ -592,17 +569,14 @@ elif st.session_state["modulo_ativo"] == "producao":
                             else:
                                 df_atualizado = pd.concat([df_existente, novo_registo_prod], ignore_index=True)
                             conn.update(data=df_atualizado)
-                            st.success(f"✅ Registo concluído com sucesso na folha de cálculo!")
+                            st.success("✅ Registo concluído com sucesso na folha de cálculo!")
 
-                            # Dispara o download imediatamente na janela
                             disparar_download_imediato(docx_bytes_p, nome_saida_prod)
-                            st.info(f"O download do arquivo **{nome_saida_prod}** foi iniciado diretamente.")
+                            st.info(f"O download do ficheiro **{nome_saida_prod}** foi iniciado diretamente.")
                         except Exception as e:
                             st.error(f"⚠️ Erro ao processar ou registar na Folha: {repr(e)}")
 
-# ==========================================
-# RODAPÉ ESTILIZADO
-# ==========================================
+# Rodapé
 st.markdown("---")
 st.markdown(
     """
