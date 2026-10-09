@@ -1,8 +1,22 @@
 import sys
 import traceback
-
-# 1. Configuração inicial obrigatória
+import os
+import io
+import re
+import base64
+from datetime import datetime
+import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+from docxtpl import DocxTemplate
+from streamlit_gsheets import GSheetsConnection
+from num2words import num2words
+from extractor import extrair_dados_processo, formatar_valor_reais
+from extractor_producao import extrair_dados_producao_medica
+
+# ==========================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==========================================
 st.set_page_config(
     page_title="Sistema de Auditoria | DAH-FUNEAS",
     page_icon="🏥",
@@ -10,32 +24,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# 2. Bloco protegido para capturar qualquer falha e exibir na tela
+# Conexão com Google Sheets via Secrets
 try:
-    import os
-    import io
-    import re
-    import base64
-    from datetime import datetime
-    import pandas as pd
-    from docxtpl import DocxTemplate
-    from streamlit_gsheets import GSheetsConnection
-    from extractor import extrair_dados_processo, formatar_valor_reais
-    from extractor_producao import extrair_dados_producao_medica
-    from num2words import num2words
-    import streamlit.components.v1 as components
-
-    # Testa a inicialização dos Secrets / Conexão
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-    except Exception as err_conn:
-        st.error("⚠️ FALHA NA CONEXÃO COM O GOOGLE SHEETS / SECRETS:")
-        st.code(str(err_conn))
-        st.stop()
-
-except Exception as err_geral:
-    st.error("🚨 OCORREU UM ERRO AO CARREGAR AS DEPENDÊNCIAS DO APLICATIVO:")
-    st.code(traceback.format_exc())
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as err_conn:
+    st.error("⚠️ FALHA NA CONEXÃO COM O GOOGLE SHEETS / SECRETS:")
+    st.code(str(err_conn))
     st.stop()
 
 # ==========================================
@@ -67,6 +61,9 @@ def disparar_download_imediato(conteudo_bytes, nome_arquivo):
     """
     components.html(js_code, height=0, width=0)
 
+# ==========================================
+# FORMATAÇÃO AUTOMÁTICA DE DATAS
+# ==========================================
 def auto_formatar_data(valor):
     if not valor or pd.isna(valor):
         return ""
@@ -149,7 +146,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Header
+# Header DAH
 st.markdown(
     """
     <div class="dah-header">
@@ -162,6 +159,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# ==========================================
+# LISTA DE EQUIPE E PERSISTÊNCIA NA URL
+# ==========================================
 MEMBROS_EQUIPE = [
     {"nome": "Emily Trevizan", "cargo": "Chefe de Setor – DAH/FUNEAS"},
     {"nome": "Julia Veiga Ramalho", "cargo": "Assistente Administrativo – DAH/FUNEAS"},
@@ -170,10 +170,29 @@ MEMBROS_EQUIPE = [
     {"nome": "Outro (Digitar manualmente)", "cargo": "DAH/FUNEAS"},
 ]
 
+nomes_opcoes = [m["nome"] for m in MEMBROS_EQUIPE]
+
+# Recupera preferência da URL ou define padrão
+usuario_url = st.query_params.get("user", "")
+indice_padrao = 0
+if usuario_url:
+    for idx, opt in enumerate(nomes_opcoes):
+        if usuario_url.lower() in opt.lower():
+            indice_padrao = idx
+            break
+
+if "analista_selecionado" not in st.session_state:
+    st.session_state["analista_selecionado"] = nomes_opcoes[indice_padrao]
+
+def on_user_change():
+    st.query_params["user"] = st.session_state["analista_selecionado"]
+
 if "modulo_ativo" not in st.session_state:
     st.session_state["modulo_ativo"] = "opme"
 
-# Seletores
+# ==========================================
+# BARRA DE MÓDULOS E RESPONSÁVEL
+# ==========================================
 col_mod1, col_mod2, col_respiro, col_user = st.columns([1.6, 1.6, 0.4, 1.4])
 
 with col_mod1:
@@ -195,13 +214,15 @@ with col_mod2:
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col_user:
-    nomes_opcoes = [m["nome"] for m in MEMBROS_EQUIPE]
     nome_selecionado = st.selectbox(
         "👤 Analista Responsável:",
         nomes_opcoes,
-        index=0,
+        key="analista_selecionado",
+        on_change=on_user_change,
         help="Responsável pela conferência do despacho"
     )
+    # Garante que o parâmetro sempre esteja sincronizado na URL
+    st.query_params["user"] = nome_selecionado
 
 if nome_selecionado == "Outro (Digitar manualmente)":
     c_out1, c_out2 = st.columns(2)
@@ -216,7 +237,10 @@ else:
 
 st.markdown("---")
 
-# MÓDULO OPME
+
+# =====================================================================
+# FUNCIONALIDADE 1: AUDITORIA DE OPME
+# =====================================================================
 if st.session_state["modulo_ativo"] == "opme":
     st.subheader("Gerador de Despacho de OPME")
     st.caption("Extração automatizada, emissão de despachos e registo consolidado no Google Sheets.")
@@ -252,7 +276,7 @@ if st.session_state["modulo_ativo"] == "opme":
                 vig_fim = st.text_input("Vigência Fim", value=dados["vigencia_fim"], key="opme_vfim")
 
         st.subheader("Relação de Notas Fiscais e Pacientes")
-        st.caption("💡 *Dica:* Na data da cirurgia, pode digitar apenas os números (ex: `13112026`).")
+        st.caption("💡 *Dica:* Na data da cirurgia, digite apenas os números (ex: `13112026`).")
 
         df_nfs = pd.DataFrame(dados["nfs"])
         if df_nfs.empty:
@@ -380,7 +404,10 @@ if st.session_state["modulo_ativo"] == "opme":
                     disparar_download_imediato(docx_bytes, nome_saida_opme)
                     st.info(f"O download do ficheiro **{nome_saida_opme}** foi iniciado diretamente.")
 
-# MÓDULO PRODUÇÃO
+
+# =====================================================================
+# FUNCIONALIDADE 2: PRODUÇÃO MÉDICA / ESCALA MÉDICA
+# =====================================================================
 elif st.session_state["modulo_ativo"] == "producao":
     st.subheader("Gerador de Despacho de Produção Médica")
     st.caption("Emissão de despacho com definição obrigatória de modalidade e especialidade médica.")
@@ -576,7 +603,9 @@ elif st.session_state["modulo_ativo"] == "producao":
                         except Exception as e:
                             st.error(f"⚠️ Erro ao processar ou registar na Folha: {repr(e)}")
 
-# Rodapé
+# ==========================================
+# RODAPÉ
+# ==========================================
 st.markdown("---")
 st.markdown(
     """
