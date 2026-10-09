@@ -1,6 +1,5 @@
 streamlit
 st-gsheets-connection
-streamlit-gsheets
 docxtpl
 pandas
 num2words
